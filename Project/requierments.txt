@@ -1,3 +1,4 @@
 pyserial
 pyelftools
 pycryptodome
+typing-extensions
