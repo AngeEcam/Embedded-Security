@@ -3,12 +3,13 @@
 
 import subprocess
 import re
-from pathlib import Path
 from datetime import datetime
 import time
 import hashlib
 import hmac
 from typing import Tuple
+from pathlib import Path
+import sys
 
 try:
     from Crypto.Hash import keccak, HMAC, SHA3_256
@@ -20,7 +21,7 @@ except Exception:
 
 def extract_strings(firmware="firmware.elf", minlen=4, output_file="strings_all.txt"):
     
-    """Extrait les chaînes du fichier ELF"""
+    """Extracts strings from the ELF file"""
 
     print("Extraction des chaînes")
     with open(output_file, "w") as f:
@@ -31,7 +32,7 @@ def extract_strings(firmware="firmware.elf", minlen=4, output_file="strings_all.
 
 def prioritize_strings(IN="strings_all.txt", OUT="candidates_prioritized.txt"):
     
-    """Attribue un score aux chaînes selon leur pertinence"""
+    """Assigns a relevance score to the strings"""
     
     print("Priorisation des chaînes")
     keywords = [
@@ -77,17 +78,17 @@ def prioritize_strings(IN="strings_all.txt", OUT="candidates_prioritized.txt"):
         for sc, s in items:
             o.write(f"{sc:03d}\t{s}\n")
 
-    print(f"{len(items)} chaînes triées -> {OUT}")
+    print(f"{len(items)} sorted strings -> {OUT}")
     return OUT
 
 def clean_candidates(IN="candidates_prioritized.txt", OUT="cleaned_candidates.txt"):
     
-    """Nettoie le fichier pour ne garder que les chaînes (sans le score)"""
+    """Cleans the file to keep only the strings (without the score)"""
     
-    print("Nettoyage des candidats")
+    print("cleaning candidates")
     with open(OUT, "w") as f:
         subprocess.run(["cut", "-f2-", IN], stdout=f)
-    print(f"Chaînes nettoyées -> {OUT}")
+    print(f"cleaned strings -> {OUT}")
     return OUT
 
 from pathlib import Path
@@ -103,15 +104,15 @@ def try_serial_candidates(candidate_file: str,
                           script_path: str = "test_candidates.py",
                           log_file: str = "serial_log.txt"):
     """
-    Exécute le script externe en affichant la sortie EN TEMPS RÉEL
-    et en l'enregistrant simultanément dans un fichier (tee).
+    Executes the external script while displaying the output in REAL TIME
+    and simultaneously saving it to a file (tee).
     """
     cand = Path(candidate_file)
     if not cand.exists():
-        raise FileNotFoundError(f"{candidate_file} introuvable")
+        raise FileNotFoundError(f"{candidate_file} not found")
 
     cmd = ["python3", "-u", script_path, str(cand), dev, str(baud)]
-    print("Tentative via serial (streaming)")
+    print("attempt via serial (streaming)")
 
     # line-buffered streaming
     with open(log_file, "a", encoding="utf-8") as logf:
@@ -135,19 +136,19 @@ def try_serial_candidates(candidate_file: str,
     if rc != 0:
         raise subprocess.CalledProcessError(rc, cmd)
 
-    print(f"Fin de l'étape serial —> log écrit dans {log_file}")
+    print(f"End of serial step → log written to {log_file}")
 
 def parse_serial_log(log_file: str = "serial_log.txt", summary_file: str = "serial_summary.txt"):
     """
-    Parcourt le fichier log et extrait les lignes :
+    Parses the log file and extracts the lines:
     - ACCESS GRANTED for:
     - Here is your salt:
     - Here is your hash:
-    Les résultats sont sauvegardés dans summary_file.
+    The results are saved in summary_file.
     """
     log_path = Path(log_file)
     if not log_path.exists():
-        print(f"Fichier {log_file} introuvable.")
+        print(f"File {log_file} not found.")
         return
 
     interesting_patterns = [
@@ -164,38 +165,33 @@ def parse_serial_log(log_file: str = "serial_log.txt", summary_file: str = "seri
         for pattern in interesting_patterns:
             if re.search(pattern, line, re.IGNORECASE):
                 results.append(line.strip())
-                break  # pour éviter les doublons si plusieurs regex matchent
+                break  
 
     if results:
         with open(summary_file, "w", encoding="utf-8") as out:
             for line in results:
                 out.write(line + "\n")
-        print(f"{len(results)} lignes intéressantes extraites -> {summary_file}")
+        print(f"{len(results)} interesting lines extracted -> {summary_file}")
     else:
-        print(" Aucune ligne intéressante trouvée dans le log.")
+        print("No interesting lines found in the log.")
 
-from pathlib import Path
-import re
-import subprocess
-import sys
+
 
 def extract_hash_and_salt(summary_file: str = "serial_filtered.txt") -> Tuple[str, str]:
     """
-    Parcourt summary_file et retourne (target_hash, salt).
-
-    - target_hash : chaîne hex (lowercase) extraite de "Here is your hash: ..."
-    - salt        : texte du salt tel qu'il apparaît (hex string si imprimé en hex)
-
-    Lève FileNotFoundError si le fichier est manquant, ValueError si l'un des deux introuvables.
+    Parses summary_file and returns (target_hash, salt).
+    - target_hash: lowercase hex string extracted from "Here is your hash: ..."
+    - salt: the salt text as it appears (hex string if printed in hex)
+    Raises FileNotFoundError if the file is missing, or ValueError if one of the two is not found.
     """
     p = Path(summary_file)
     if not p.exists():
-        raise FileNotFoundError(f"{summary_file} introuvable")
+        raise FileNotFoundError(f"{summary_file} not found")
 
     target_hash = None
     salt = None
 
-    # Patterns gérant exemples variés (avec ou sans "Denied: '...'", CR/LF, etc.)
+    
     re_hash = re.compile(r"Here is your hash:\s*([0-9A-Fa-f]+)", re.IGNORECASE)
     re_salt_hex = re.compile(r"Here is your salt:\s*([0-9A-Fa-f]+)", re.IGNORECASE)
     re_salt_text = re.compile(r"Here is your salt:\s*(.+)", re.IGNORECASE)
@@ -225,8 +221,8 @@ def extract_hash_and_salt(summary_file: str = "serial_filtered.txt") -> Tuple[st
                 continue
 
     if not target_hash or salt is None:
-        raise ValueError("Impossible d'extraire le hash et/ou le salt depuis le fichier résumé.")
-
+        raise ValueError("Unable to extract the hash and/or salt from the summary file.")
+        
     return target_hash, salt
 
 def call_identify_script(candidates_file: str,
@@ -234,14 +230,14 @@ def call_identify_script(candidates_file: str,
                          salt: str,
                          script_path: str = "identify_hash.py") -> int:
     """
-    Appelle le script externe (find_hash_and_algo.py) en lui passant :
-      - candidates_file (ex: "cleaned_candidates.txt")
+    Calls the external script (find_hash_and_algo.py) with:
+      - candidates_file (e.g., "cleaned_candidates.txt")
       - target_hash (hex string)
       - salt (string; hex or text)
-    Détecte automatiquement si salt est hex et ajoute l'argument "hex".
-    Affiche la sortie du script en temps réel et retourne son code de sortie.
+    Automatically detects if the salt is hex and adds the "hex" argument.
+    Displays the script output in real time and returns its exit code.
     """
-    # vérifications minimales
+   
     if not Path(candidates_file).exists():
         raise FileNotFoundError(f"{candidates_file} introuvable")
     if not Path(script_path).exists():
@@ -256,38 +252,38 @@ def call_identify_script(candidates_file: str,
         cmd.append("hex")
 
     print(f"-> Executing: {' '.join(cmd)}")
-    # subprocess.run sans capture_output affiche la sortie en direct
+    
     proc = subprocess.run(cmd)
     return proc.returncode
 
 
 
 def main():
-    firmware = "secure_sketch_v20251015.1.elf"  # Nom du fichier firmware ELF
-    strings_file = extract_strings(firmware) # Extrait les chaînes du firmware
-    prioritize_strings(strings_file) # Priorise les chaînes extraites
-    clean_candidates("candidates_prioritized.txt") # Nettoie le fichier des candidats
+    firmware = "secure_sketch_v20251015.1.elf"  
+    strings_file = extract_strings(firmware) 
+    prioritize_strings(strings_file) 
+    clean_candidates("candidates_prioritized.txt") 
 
     try_serial_candidates("cleaned_candidates.txt",
                           dev="/dev/cu.usbserial-1130",
                           baud=9600,
                           timeout=0.6,
-                          script_path="test_candidates.py") # Tente les candidats via le port série
-    parse_serial_log("serial_log.txt", "serial_summary.txt") # Analyse le log série
+                          script_path="test_candidates.py") 
+    parse_serial_log("serial_log.txt", "serial_summary.txt")
 
     try:
         target_hash, salt = extract_hash_and_salt("serial_summary.txt")
         print(f"Hash extrait: {target_hash}")
         print(f"Salt extrait: {salt}")
     except (FileNotFoundError, ValueError) as e:
-        print(f"Erreur lors de l'extraction du hash et du salt: {e}") 
+        print(f"Error while extracting hash and salt: {e}")
 
     rc = call_identify_script("cleaned_candidates.txt", target_hash, salt,
                               script_path="identify_hash.py")
     if rc == 0:
-        print("MATCH trouvé (voir found.txt).")
+        print("MATCH found (see found.txt).")
     else:
-        print("Aucun match ou erreur (code:", rc, ")")
+        print("No match or error (code:", rc, ")")
 
     
 
